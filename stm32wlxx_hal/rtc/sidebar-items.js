@@ -1,0 +1,1 @@
+initSidebarItems({"enum":[["AlarmDay","Alarm day."],["Clk","RTC clock selection"]],"mod":[["stat","Status (interrupt) masks."]],"struct":[["Alarm","Alarm settings."],["Rtc","Real-time clock driver."]]});
