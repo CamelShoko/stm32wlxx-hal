@@ -266,6 +266,7 @@ dependencies = [
  "cortex-m-rt",
  "defmt",
  "defmt-rtt",
+ "nb 1.0.0",
  "panic-probe",
  "stm32wlxx-hal",
 ]

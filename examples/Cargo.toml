@@ -8,6 +8,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 defmt = "0.3"
+nb = "1"
 defmt-rtt = "0.3"
 cortex-m-rt = "0.7"
 panic-probe = { version = "0.3", features = ["print-defmt" ] }
