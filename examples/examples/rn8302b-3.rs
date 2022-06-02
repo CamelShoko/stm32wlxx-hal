@@ -132,6 +132,18 @@ impl Serial {
     }
 }
 
+/**
+ * [IMPORTANT] probe-rs | probe-run | cargo-embed | cargo-flash
+ * 
+ * cargo build -p examples --target thumbv7em-none-eabi --example rn8302b-3
+ * cargo run -p examples --target thumbv7em-none-eabi --example rn8302b-3
+ * probe-run --chip STM32WLE5JCIx --connect-under-reset ../../target/thumbv7em-none-eabi/debug/examples/rn8302b-3
+ * 
+ * DEFMT_LOG=trace cargo run-ex rn8302b-3
+ * 
+ * arm-none-eabi-objcopy -v -O binary ../../target/thumbv7em-none-eabi/debug/examples/rn8302b-3 rn8302b-3.bin
+ * probe-run --list-probes | probe-run --list-chips
+ */
 #[hal::cortex_m_rt::entry]
 fn main() -> ! {
     let mut dp: pac::Peripherals = defmt::unwrap!(pac::Peripherals::take());
