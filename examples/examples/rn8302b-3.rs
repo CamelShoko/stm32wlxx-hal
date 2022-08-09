@@ -68,18 +68,6 @@ impl Rn8302 {
         self.delay.delay_ms(stable);
     }
 
-    fn read_1byte(&mut self, bank: u8, addr: u8) -> u8 {
-        let mut input: [u8; 3] = [0; 3];
-        input[0] = addr;
-        input[1] = bank << 4;
-        self.chip.set_level(PinState::Low);
-        unwrap!(self.bus.transfer(&mut input));
-        self.chip.set_level(PinState::High);
-        // defmt::debug!("reg ---> {:#04X}", input);
-        let output = input[2];
-        output
-    }
-
     fn read_4byte(&mut self, bank: u8, addr: u8) -> [u8; 4] {
         let mut input: [u8; 6] = [0; 6];
         input[0] = addr;
@@ -110,19 +98,87 @@ impl Rn8302 {
         output
     }
 
-    fn write_3byte(&mut self, bank: u8, addr: u8, b0: u8, b1: u8, b2: u8) {
-        let mut input: [u8; 6] = [0; 6];
+    fn read_2byte(&mut self, bank: u8, addr: u8) -> [u8; 2] {
+        let mut input: [u8; 4] = [0; 4];
         input[0] = addr;
         input[1] = bank << 4;
-        input[2] = b0;
-        input[3] = b1;
-        input[4] = b2;
-        let checksum: u8 = input[0] | input[1] | input[2] | input[3] | input[4];
-        input[5] = !checksum;
-        defmt::info!("reg <--- {:#04X}", input);
         self.chip.set_level(PinState::Low);
         unwrap!(self.bus.transfer(&mut input));
         self.chip.set_level(PinState::High);
+        // defmt::debug!("reg ---> {:#04X}", input);
+        let mut output: [u8; 2] = [0; 2];
+        for i in 0..2 {
+            output[i] = input[2 + i];
+        }
+        output
+    }
+
+    #[allow(dead_code)]
+    fn read_1byte(&mut self, bank: u8, addr: u8) -> u8 {
+        let mut input: [u8; 3] = [0; 3];
+        input[0] = addr;
+        input[1] = bank << 4;
+        self.chip.set_level(PinState::Low);
+        unwrap!(self.bus.transfer(&mut input));
+        self.chip.set_level(PinState::High);
+        // defmt::debug!("reg ---> {:#04X}", input);
+        let output = input[2];
+        output
+    }
+
+    #[allow(dead_code)]
+    fn write_3byte(&mut self, bank: u8, addr: u8, b0: u8, b1: u8, b2: u8) {
+        let mut key: [u8; 4] = [0x80, 0x90, 0xE5, 0x0A];
+        self.chip.set_level(PinState::Low);
+        unwrap!(self.bus.transfer(&mut key));
+        self.chip.set_level(PinState::High);
+
+        let mut input: [u8; 6] = [0; 6];
+        input[0] = addr;
+        input[1] = 0x80 | (bank << 4);
+        input[2] = b0;
+        input[3] = b1;
+        input[4] = b2;
+        let mut sum: u32 = 0;
+        for i in 0..5 {
+            sum += input[i] as u32;
+        }
+        input[5] = 0xFF - (sum as u8);
+        // defmt::debug!("reg <--- {:#04X}", input);
+        self.chip.set_level(PinState::Low);
+        unwrap!(self.bus.transfer(&mut input));
+        self.chip.set_level(PinState::High);
+    }
+
+    fn write_1byte(&mut self, bank: u8, addr: u8, b0: u8) {
+        let mut key: [u8; 4] = [0x80, 0x90, 0xE5, 0x0A];
+        self.chip.set_level(PinState::Low);
+        unwrap!(self.bus.transfer(&mut key));
+        self.chip.set_level(PinState::High);
+
+        let mut input: [u8; 4] = [0; 4];
+        input[0] = addr;
+        input[1] = 0x80 | (bank << 4);
+        input[2] = b0;
+        let mut sum: u32 = 0;
+        for i in 0..3 {
+            sum += input[i] as u32;
+        }
+        input[3] = 0xFF - (sum as u8);
+        // defmt::debug!("reg <--- {:#04X}", input);
+        self.chip.set_level(PinState::Low);
+        unwrap!(self.bus.transfer(&mut input));
+        self.chip.set_level(PinState::High);
+    }
+
+    fn i_convert_float(&mut self, hex: &[u8]) -> f32 {
+        let mut i: u32 =
+            (hex[0] as u32) << 24 | (hex[1] as u32) << 16 | (hex[2] as u32) << 8 | (hex[3] as u32);
+        if i > 7500 {
+            i = i - 7500;
+        }
+        let c: f32 = (i as f32) / 35855.0;
+        c
     }
 }
 
@@ -144,11 +200,13 @@ impl Serial {
         Serial { bus }
     }
 
+    #[allow(dead_code)]
     fn send_string(&mut self, s: &str) {
         defmt::info!("input string {}", s);
         unwrap!(write!(self.bus, "{}", s).ok());
     }
 
+    #[allow(dead_code)]
     fn send_hex(&mut self, hex: &[u8]) {
         defmt::info!("input hex {:#04X}", hex);
         for byte in hex.into_iter() {
@@ -181,9 +239,6 @@ fn main() -> ! {
 
     // serial
     let mut serial: Serial = Serial::new(dp.LPUART, &mut dp.RCC, gpioa.a3, gpioa.a2);
-    serial.send_string("rn8302\r\n");
-    let hex: [u8; 4] = [0x30, 0x31, 0x32, 0x33];
-    serial.send_hex(&hex);
 
     // rn8302
     let mut rn8302: Rn8302 = Rn8302::new(
@@ -199,19 +254,29 @@ fn main() -> ! {
     rn8302.power_on(50);
     let id = rn8302.read_3byte(0x01, 0x8F);
     defmt::info!("rn8302 id ---> {:#04X}", id);
-    let mo = rn8302.read_1byte(0x01, 0x81);
-    defmt::info!("rn8302 mo ---> {:#04X}", mo);
-    rn8302.write_3byte(0x01, 0x62, 0x77, 0x77, 0x77);
+
+    rn8302.write_1byte(0x01, 0x81, 0xA2);
+    rn8302.write_1byte(0x01, 0x82, 0xFA);
+    rn8302.delay_ms(50);
+
+    let status = rn8302.read_2byte(0x01, 0x8A);
+    defmt::info!("rn8302 status ---> {:#04X}", status);
 
     loop {
         let ai = rn8302.read_4byte(0x00, 0x0B);
-        defmt::info!("rn8302 ai ---> {:#04X}", ai);
-        let ad = rn8302.read_3byte(0x00, 0x03);
-        defmt::info!("rn8302 ad ---> {:#04X}", ad);
-        let av = rn8302.read_4byte(0x00, 0x04);
-        defmt::info!("rn8302 av ---> {:#04X}", av);
-        let ao = rn8302.read_4byte(0x01, 0x24);
-        defmt::info!("rn8302 ao ---> {:#04X}", ao);
+        let ii = rn8302.i_convert_float(&ai);
+        defmt::info!("rn8302 ai ---> {:#04X} {}", ai, ii);
+        unwrap!(write!(
+            serial.bus,
+            "[\"ID\":{},\"FW\":{},\"AI\":{},\"BI\":{},\"CI\":{},\"NI\":{}]\r\n",
+            "123456",
+            "V10.01",
+            0,
+            0,
+            0,
+            (ii as u32)
+        )
+        .ok());
 
         if led.level() == PinState::High {
             led.set_level(PinState::Low);
