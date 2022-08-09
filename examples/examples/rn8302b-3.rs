@@ -7,23 +7,22 @@ use core::fmt::Write;
 use defmt::unwrap;
 use defmt_rtt as _; // global logger
 use hal::spi;
-use nb;
 use panic_probe as _; // panic handler
 use stm32wlxx_hal::{
     self as hal,
     cortex_m::{self, delay::Delay},
     embedded_hal::blocking::spi::Transfer,
     embedded_hal::prelude::*,
-    gpio::{pins, Output, PinState, PortA, PortB},
+    gpio::{pins, Output, PinState, PortA},
     pac,
-    pwr::enable_shutdown_sleeponexit,
     spi::{BaudRate::Div64, Spi, MODE_1},
     uart::{self, LpUart},
     util::new_delay,
 };
+
 struct Rn8302 {
     bus: spi::Spi<pac::SPI1, pins::A5, pins::A6, pins::A7>,
-    open: Output<pins::B6>,
+    open: Output<pins::A8>,
     chip: Output<pins::A4>,
     delay: Delay,
 }
@@ -38,12 +37,12 @@ impl Rn8302 {
         miso: pins::A6,
         mosi: pins::A7,
         ness: pins::A4,
-        ctrl: pins::B6,
+        ctrl: pins::A8,
     ) -> Self {
         let delay: Delay = new_delay(syst, rcc);
 
         let chip: Output<pins::A4> = cortex_m::interrupt::free(|cs| (Output::default(ness, cs)));
-        let open: Output<pins::B6> = cortex_m::interrupt::free(|cs| (Output::default(ctrl, cs)));
+        let open: Output<pins::A8> = cortex_m::interrupt::free(|cs| (Output::default(ctrl, cs)));
 
         let bus = cortex_m::interrupt::free(|cs| {
             Spi::new_spi1_full_duplex(spi, (sclk, miso, mosi), MODE_1, Div64, rcc, cs)
@@ -65,6 +64,10 @@ impl Rn8302 {
         self.delay.delay_ms(stable);
     }
 
+    fn delay_ms(&mut self, stable: u32) {
+        self.delay.delay_ms(stable);
+    }
+
     fn read_1byte(&mut self, bank: u8, addr: u8) -> u8 {
         let mut input: [u8; 3] = [0; 3];
         input[0] = addr;
@@ -72,19 +75,19 @@ impl Rn8302 {
         self.chip.set_level(PinState::Low);
         unwrap!(self.bus.transfer(&mut input));
         self.chip.set_level(PinState::High);
-        defmt::debug!("reg ---> {:#04X}", input);
+        // defmt::debug!("reg ---> {:#04X}", input);
         let output = input[2];
         output
     }
 
     fn read_4byte(&mut self, bank: u8, addr: u8) -> [u8; 4] {
-        let mut input: [u8; 7] = [0; 7];
+        let mut input: [u8; 6] = [0; 6];
         input[0] = addr;
         input[1] = bank << 4;
         self.chip.set_level(PinState::Low);
         unwrap!(self.bus.transfer(&mut input));
         self.chip.set_level(PinState::High);
-        defmt::debug!("reg ---> {:#04X}", input);
+        // defmt::debug!("reg ---> {:#04X}", input);
         let mut output: [u8; 4] = [0; 4];
         for i in 0..4 {
             output[i] = input[2 + i];
@@ -92,12 +95,34 @@ impl Rn8302 {
         output
     }
 
-    const fn wmstr(self, reg: u8) -> &'static str {
-        match reg {
-            0x01 => "EMM",
-            0x03 => "SLM",
-            _ => "UNKNOWN",
+    fn read_3byte(&mut self, bank: u8, addr: u8) -> [u8; 3] {
+        let mut input: [u8; 5] = [0; 5];
+        input[0] = addr;
+        input[1] = bank << 4;
+        self.chip.set_level(PinState::Low);
+        unwrap!(self.bus.transfer(&mut input));
+        self.chip.set_level(PinState::High);
+        // defmt::debug!("reg ---> {:#04X}", input);
+        let mut output: [u8; 3] = [0; 3];
+        for i in 0..3 {
+            output[i] = input[2 + i];
         }
+        output
+    }
+
+    fn write_3byte(&mut self, bank: u8, addr: u8, b0: u8, b1: u8, b2: u8) {
+        let mut input: [u8; 6] = [0; 6];
+        input[0] = addr;
+        input[1] = bank << 4;
+        input[2] = b0;
+        input[3] = b1;
+        input[4] = b2;
+        let checksum: u8 = input[0] | input[1] | input[2] | input[3] | input[4];
+        input[5] = !checksum;
+        defmt::info!("reg <--- {:#04X}", input);
+        self.chip.set_level(PinState::Low);
+        unwrap!(self.bus.transfer(&mut input));
+        self.chip.set_level(PinState::High);
     }
 }
 
@@ -127,29 +152,32 @@ impl Serial {
     fn send_hex(&mut self, hex: &[u8]) {
         defmt::info!("input hex {:#04X}", hex);
         for byte in hex.into_iter() {
-            unwrap!(nb::block!(self.bus.write(*byte)));
+            let word: u8 = *byte;
+            self.bus.write(word).ok();
         }
     }
 }
 
 /**
  * [IMPORTANT] probe-rs | probe-run | cargo-embed | cargo-flash
- * 
+ *
  * cargo build -p examples --target thumbv7em-none-eabi --example rn8302b-3
  * cargo run -p examples --target thumbv7em-none-eabi --example rn8302b-3
  * probe-run --chip STM32WLE5JCIx --connect-under-reset ../../target/thumbv7em-none-eabi/debug/examples/rn8302b-3
- * 
+ *
  * DEFMT_LOG=trace cargo run-ex rn8302b-3
- * 
+ *
  * arm-none-eabi-objcopy -v -O binary ../../target/thumbv7em-none-eabi/debug/examples/rn8302b-3 rn8302b-3.bin
  * probe-run --list-probes | probe-run --list-chips
  */
 #[hal::cortex_m_rt::entry]
 fn main() -> ! {
     let mut dp: pac::Peripherals = defmt::unwrap!(pac::Peripherals::take());
-    let mut cp: pac::CorePeripherals = defmt::unwrap!(pac::CorePeripherals::take());
+    let cp: pac::CorePeripherals = defmt::unwrap!(pac::CorePeripherals::take());
     let gpioa: PortA = PortA::split(dp.GPIOA, &mut dp.RCC);
-    let gpiob: PortB = PortB::split(dp.GPIOB, &mut dp.RCC);
+
+    let mut led: Output<pins::A1> = cortex_m::interrupt::free(|cs| (Output::default(gpioa.a1, cs)));
+    led.set_level(PinState::High);
 
     // serial
     let mut serial: Serial = Serial::new(dp.LPUART, &mut dp.RCC, gpioa.a3, gpioa.a2);
@@ -166,15 +194,30 @@ fn main() -> ! {
         gpioa.a6,
         gpioa.a7,
         gpioa.a4,
-        gpiob.b6,
+        gpioa.a8,
     );
     rn8302.power_on(50);
-    let id = rn8302.read_4byte(0x01, 0x8F);
+    let id = rn8302.read_3byte(0x01, 0x8F);
     defmt::info!("rn8302 id ---> {:#04X}", id);
-    let mode = rn8302.read_1byte(0x01, 0x81);
-    defmt::info!("rn8302 {} mode", rn8302.wmstr(mode));
+    let mo = rn8302.read_1byte(0x01, 0x81);
+    defmt::info!("rn8302 mo ---> {:#04X}", mo);
+    rn8302.write_3byte(0x01, 0x62, 0x77, 0x77, 0x77);
 
     loop {
-        enable_shutdown_sleeponexit(&mut dp.PWR, &mut cp.SCB);
+        let ai = rn8302.read_4byte(0x00, 0x0B);
+        defmt::info!("rn8302 ai ---> {:#04X}", ai);
+        let ad = rn8302.read_3byte(0x00, 0x03);
+        defmt::info!("rn8302 ad ---> {:#04X}", ad);
+        let av = rn8302.read_4byte(0x00, 0x04);
+        defmt::info!("rn8302 av ---> {:#04X}", av);
+        let ao = rn8302.read_4byte(0x01, 0x24);
+        defmt::info!("rn8302 ao ---> {:#04X}", ao);
+
+        if led.level() == PinState::High {
+            led.set_level(PinState::Low);
+        } else {
+            led.set_level(PinState::High);
+        }
+        rn8302.delay_ms(1000);
     }
 }
