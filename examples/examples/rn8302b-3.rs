@@ -14,6 +14,7 @@ use stm32wlxx_hal::{
     embedded_hal::blocking::spi::Transfer,
     embedded_hal::prelude::*,
     gpio::{pins, Output, PinState, PortA},
+    info::Uid,
     pac,
     spi::{BaudRate::Div64, Spi, MODE_1},
     uart::{self, LpUart},
@@ -75,7 +76,7 @@ impl Rn8302 {
         self.chip.set_level(PinState::Low);
         unwrap!(self.bus.transfer(&mut input));
         self.chip.set_level(PinState::High);
-        // defmt::debug!("reg ---> {:#04X}", input);
+        defmt::debug!("reg ---> {:#04X}", input);
         let mut output: [u8; 4] = [0; 4];
         for i in 0..4 {
             output[i] = input[2 + i];
@@ -90,7 +91,7 @@ impl Rn8302 {
         self.chip.set_level(PinState::Low);
         unwrap!(self.bus.transfer(&mut input));
         self.chip.set_level(PinState::High);
-        // defmt::debug!("reg ---> {:#04X}", input);
+        defmt::debug!("reg ---> {:#04X}", input);
         let mut output: [u8; 3] = [0; 3];
         for i in 0..3 {
             output[i] = input[2 + i];
@@ -105,7 +106,7 @@ impl Rn8302 {
         self.chip.set_level(PinState::Low);
         unwrap!(self.bus.transfer(&mut input));
         self.chip.set_level(PinState::High);
-        // defmt::debug!("reg ---> {:#04X}", input);
+        defmt::debug!("reg ---> {:#04X}", input);
         let mut output: [u8; 2] = [0; 2];
         for i in 0..2 {
             output[i] = input[2 + i];
@@ -121,7 +122,7 @@ impl Rn8302 {
         self.chip.set_level(PinState::Low);
         unwrap!(self.bus.transfer(&mut input));
         self.chip.set_level(PinState::High);
-        // defmt::debug!("reg ---> {:#04X}", input);
+        defmt::debug!("reg ---> {:#04X}", input);
         let output = input[2];
         output
     }
@@ -144,7 +145,7 @@ impl Rn8302 {
             sum += input[i] as u32;
         }
         input[5] = 0xFF - (sum as u8);
-        // defmt::debug!("reg <--- {:#04X}", input);
+        defmt::debug!("reg <--- {:#04X}", input);
         self.chip.set_level(PinState::Low);
         unwrap!(self.bus.transfer(&mut input));
         self.chip.set_level(PinState::High);
@@ -165,7 +166,7 @@ impl Rn8302 {
             sum += input[i] as u32;
         }
         input[3] = 0xFF - (sum as u8);
-        // defmt::debug!("reg <--- {:#04X}", input);
+        defmt::debug!("reg <--- {:#04X}", input);
         self.chip.set_level(PinState::Low);
         unwrap!(self.bus.transfer(&mut input));
         self.chip.set_level(PinState::High);
@@ -202,13 +203,13 @@ impl Serial {
 
     #[allow(dead_code)]
     fn send_string(&mut self, s: &str) {
-        defmt::info!("input string {}", s);
+        defmt::debug!("input string {}", s);
         unwrap!(write!(self.bus, "{}", s).ok());
     }
 
     #[allow(dead_code)]
     fn send_hex(&mut self, hex: &[u8]) {
-        defmt::info!("input hex {:#04X}", hex);
+        defmt::debug!("input hex {:#04X}", hex);
         for byte in hex.into_iter() {
             let word: u8 = *byte;
             self.bus.write(word).ok();
@@ -261,6 +262,7 @@ fn main() -> ! {
 
     let status = rn8302.read_2byte(0x01, 0x8A);
     defmt::info!("rn8302 status ---> {:#04X}", status);
+    let uid = Uid::from_device().lot();
 
     loop {
         let ai = rn8302.read_4byte(0x00, 0x0B);
@@ -268,8 +270,8 @@ fn main() -> ! {
         defmt::info!("rn8302 ai ---> {:#04X} {}", ai, ii);
         unwrap!(write!(
             serial.bus,
-            "[\"ID\":{},\"FW\":{},\"AI\":{},\"BI\":{},\"CI\":{},\"NI\":{}]\r\n",
-            "123456",
+            r#"{{"id":"{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}","fw":"{}","I":{{"A":{},"B":{},"C":{},"N":{},"unit":"mA"}}}}"#,
+            uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6],
             "V10.01",
             0,
             0,
@@ -277,12 +279,13 @@ fn main() -> ! {
             (ii as u32)
         )
         .ok());
+        serial.send_hex(&[0x0D, 0x0A]);
 
         if led.level() == PinState::High {
             led.set_level(PinState::Low);
         } else {
             led.set_level(PinState::High);
         }
-        rn8302.delay_ms(1000);
+        rn8302.delay_ms(500);
     }
 }
