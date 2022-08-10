@@ -13,11 +13,11 @@ use stm32wlxx_hal::{
     cortex_m::{self, delay::Delay},
     embedded_hal::blocking::spi::Transfer,
     embedded_hal::prelude::*,
-    gpio::{pins, Output, PinState, PortA},
+    gpio::{pins, Output, PinState, PortA, PortB},
     info::Uid,
     pac,
     spi::{BaudRate::Div64, Spi, MODE_1},
-    uart::{self, LpUart},
+    uart::{self, LpUart, Uart1},
     util::new_delay,
 };
 
@@ -202,7 +202,7 @@ impl Serial {
         rcc.cr.modify(|_, w| w.hsion().set_bit());
         while rcc.cr.read().hsirdy().is_not_ready() {}
         let bus = cortex_m::interrupt::free(|cs| {
-            LpUart::new(lpuart, 115200, uart::Clk::Hsi16, rcc)
+            LpUart::new(lpuart, 230400, uart::Clk::Hsi16, rcc)
                 .enable_rx(rx, cs)
                 .enable_tx(tx, cs)
         });
@@ -226,6 +226,42 @@ impl Serial {
     }
 }
 
+struct Line {
+    bus: Uart1<pins::B7, pins::B6>,
+}
+
+impl Line {
+    #[inline]
+    pub fn new(uart1: pac::USART1, rcc: &mut pac::RCC, rx: pins::B7, tx: pins::B6) -> Self {
+        rcc.cr.modify(|_, w| w.hsion().set_bit());
+        while rcc.cr.read().hsirdy().is_not_ready() {}
+        let bus = cortex_m::interrupt::free(|cs| {
+            Uart1::new(uart1, 230400, uart::Clk::Hsi16, rcc)
+                .enable_rx(rx, cs)
+                .enable_tx(tx, cs)
+        });
+        defmt::info!("line bus init done");
+        Line { bus }
+    }
+
+    #[allow(dead_code)]
+    fn send_string(&mut self, s: &str) {
+        defmt::debug!("input string {}", s);
+        unwrap!(write!(self.bus, "{}", s).ok());
+    }
+
+    #[allow(dead_code)]
+    fn send_hex(&mut self, hex: &[u8]) {
+        defmt::debug!("input hex {:#04X}", hex);
+        for byte in hex.into_iter() {
+            let word: u8 = *byte;
+            self.bus.write(word).ok();
+        }
+    }
+}
+
+const PROTOCOL_VER: &str = "V10.01";
+
 /**
  * [IMPORTANT] probe-rs | probe-run | cargo-embed | cargo-flash
  *
@@ -243,12 +279,16 @@ fn main() -> ! {
     let mut dp: pac::Peripherals = defmt::unwrap!(pac::Peripherals::take());
     let cp: pac::CorePeripherals = defmt::unwrap!(pac::CorePeripherals::take());
     let gpioa: PortA = PortA::split(dp.GPIOA, &mut dp.RCC);
+    let gpiob: PortB = PortB::split(dp.GPIOB, &mut dp.RCC);
 
     let mut led: Output<pins::A1> = cortex_m::interrupt::free(|cs| (Output::default(gpioa.a1, cs)));
     led.set_level(PinState::High);
 
     // serial
     let mut serial: Serial = Serial::new(dp.LPUART, &mut dp.RCC, gpioa.a3, gpioa.a2);
+
+    // line
+    let mut line: Line = Line::new(dp.USART1, &mut dp.RCC, gpiob.b7, gpiob.b6);
 
     // rn8302
     let mut rn8302: Rn8302 = Rn8302::new(
@@ -291,12 +331,28 @@ fn main() -> ! {
         let cfi = rn8302.i_convert_float(&cii, 3);
         defmt::info!("rn8302 CI ---> {:#04X} {}", cii, cfi);
 
+        // line
+        unwrap!(write!(
+            line.bus,
+            r#"{{"seq":{},"id":"{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}","ver":"{}","I":{{"A":{},"B":{},"C":{},"N":{},"unit":"mA"}}}}"#,
+            (seq as u32),
+            uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6],
+            PROTOCOL_VER,
+            (afi as u32),
+            (bfi as u32),
+            (cfi as u32),
+            (nfi as u32)
+        )
+        .ok());
+        line.send_hex(&[0x0D, 0x0A]);
+
+        // serial
         unwrap!(write!(
             serial.bus,
             r#"{{"seq":{},"id":"{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}","ver":"{}","I":{{"A":{},"B":{},"C":{},"N":{},"unit":"mA"}}}}"#,
             (seq as u32),
             uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6],
-            "V10.01",
+            PROTOCOL_VER,
             (afi as u32),
             (bfi as u32),
             (cfi as u32),
@@ -306,11 +362,9 @@ fn main() -> ! {
         serial.send_hex(&[0x0D, 0x0A]);
         seq = (seq + 1) as u32;
 
-        if led.level() == PinState::High {
-            led.set_level(PinState::Low);
-        } else {
-            led.set_level(PinState::High);
-        }
-        rn8302.delay_ms(500);
+        led.set_level(PinState::High);
+        rn8302.delay_ms(50);
+        led.set_level(PinState::Low);
+        rn8302.delay_ms(450);
     }
 }
