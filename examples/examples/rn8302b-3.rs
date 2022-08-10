@@ -172,13 +172,22 @@ impl Rn8302 {
         self.chip.set_level(PinState::High);
     }
 
-    fn i_convert_float(&mut self, hex: &[u8]) -> f32 {
+    fn i_convert_float(&mut self, hex: &[u8], t: u8) -> f32 {
         let mut i: u32 =
             (hex[0] as u32) << 24 | (hex[1] as u32) << 16 | (hex[2] as u32) << 8 | (hex[3] as u32);
         if i > 7500 {
             i = i - 7500;
         }
-        let c: f32 = (i as f32) / 35855.0;
+        // N: 35855 A: 1835.0
+        let mut ratio: f32 = 1.0;
+        if t == 1 || t == 2 || t == 3 {
+            ratio = 1845.0;
+        }
+        else
+        if t == 4 {
+            ratio = 35855.0;
+        }
+        let c: f32 = (i as f32) / ratio;
         c
     }
 }
@@ -263,23 +272,39 @@ fn main() -> ! {
     let status = rn8302.read_2byte(0x01, 0x8A);
     defmt::info!("rn8302 status ---> {:#04X}", status);
     let uid = Uid::from_device().lot();
+    let mut seq: u32 = 0;
 
     loop {
-        let ai = rn8302.read_4byte(0x00, 0x0B);
-        let ii = rn8302.i_convert_float(&ai);
-        defmt::info!("rn8302 ai ---> {:#04X} {}", ai, ii);
+        let nii = rn8302.read_4byte(0x00, 0x0B);
+        let nfi = rn8302.i_convert_float(&nii, 4);
+        defmt::info!("rn8302 NI ---> {:#04X} {}", nii, nfi);
+
+        let aii = rn8302.read_4byte(0x00, 0x0E);
+        let afi = rn8302.i_convert_float(&aii, 1);
+        defmt::info!("rn8302 AI ---> {:#04X} {}", aii, afi);
+
+        let bii = rn8302.read_4byte(0x00, 0x0D);
+        let bfi = rn8302.i_convert_float(&bii, 2);
+        defmt::info!("rn8302 BI ---> {:#04X} {}", bii, bfi);
+
+        let cii = rn8302.read_4byte(0x00, 0x0C);
+        let cfi = rn8302.i_convert_float(&cii, 3);
+        defmt::info!("rn8302 CI ---> {:#04X} {}", cii, cfi);
+
         unwrap!(write!(
             serial.bus,
-            r#"{{"id":"{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}","fw":"{}","I":{{"A":{},"B":{},"C":{},"N":{},"unit":"mA"}}}}"#,
+            r#"{{"seq":{},"id":"{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}","ver":"{}","I":{{"A":{},"B":{},"C":{},"N":{},"unit":"mA"}}}}"#,
+            (seq as u32),
             uid[0], uid[1], uid[2], uid[3], uid[4], uid[5], uid[6],
             "V10.01",
-            0,
-            0,
-            0,
-            (ii as u32)
+            (afi as u32),
+            (bfi as u32),
+            (cfi as u32),
+            (nfi as u32)
         )
         .ok());
         serial.send_hex(&[0x0D, 0x0A]);
+        seq = (seq + 1) as u32;
 
         if led.level() == PinState::High {
             led.set_level(PinState::Low);
