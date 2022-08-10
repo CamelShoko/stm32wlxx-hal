@@ -182,9 +182,7 @@ impl Rn8302 {
         let mut ratio: f32 = 1.0;
         if t == 1 || t == 2 || t == 3 {
             ratio = 1845.0;
-        }
-        else
-        if t == 4 {
+        } else if t == 4 {
             ratio = 35855.0;
         }
         let c: f32 = (i as f32) / ratio;
@@ -203,8 +201,7 @@ impl Serial {
         rcc.cr.modify(|_, w| w.hsion().set_bit());
         while rcc.cr.read().hsirdy().is_not_ready() {}
         let bus = cortex_m::interrupt::free(|cs| {
-            LpUart::new(lpuart, 230400, uart::Clk::Hsi16, rcc)
-                .enable_tx(tx, cs)
+            LpUart::new(lpuart, 230400, uart::Clk::Hsi16, rcc).enable_tx(tx, cs)
         });
         defmt::info!("serial bus init done");
         Serial { bus }
@@ -237,8 +234,7 @@ impl Line {
         rcc.cr.modify(|_, w| w.hsion().set_bit());
         while rcc.cr.read().hsirdy().is_not_ready() {}
         let bus = cortex_m::interrupt::free(|cs| {
-            Uart1::new(uart1, 230400, uart::Clk::Hsi16, rcc)
-                .enable_tx(tx, cs)
+            Uart1::new(uart1, 230400, uart::Clk::Hsi16, rcc).enable_tx(tx, cs)
         });
         defmt::info!("line bus init done");
         Line { bus }
@@ -261,6 +257,10 @@ impl Line {
 }
 
 const PROTOCOL_VER: &str = "V10.01";
+const NI_THD: f32 = 500.0;
+const AI_THD: f32 = 500.0;
+const BI_THD: f32 = 500.0;
+const CI_THD: f32 = 500.0;
 
 /**
  * [IMPORTANT] probe-rs | probe-run | cargo-embed | cargo-flash
@@ -312,7 +312,15 @@ fn main() -> ! {
     let status = rn8302.read_2byte(0x01, 0x8A);
     defmt::info!("rn8302 status ---> {:#04X}", status);
     let uid = Uid::from_device().lot();
+
     let mut seq: u32 = 0;
+    let mut systick: u64 = 0;
+    let mut msgtick: u64 = 0;
+    let mut update:bool = false;
+    let mut nfi_prev: f32 = 0.0;
+    let mut afi_prev: f32 = 0.0;
+    let mut bfi_prev: f32 = 0.0;
+    let mut cfi_prev: f32 = 0.0;
 
     loop {
         let nii = rn8302.read_4byte(0x00, 0x0B);
@@ -331,8 +339,33 @@ fn main() -> ! {
         let cfi = rn8302.i_convert_float(&cii, 3);
         defmt::info!("rn8302 CI ---> {:#04X} {}", cii, cfi);
 
-        // line
-        unwrap!(write!(
+        let nfi_diff = nfi - nfi_prev;
+        if nfi_diff >= NI_THD || nfi_diff <= -NI_THD {
+            update = true;
+            nfi_prev = nfi;
+        }
+        let afi_diff = afi - afi_prev;
+        if afi_diff >= AI_THD || afi_diff <= -AI_THD {
+            update = true;
+            afi_prev = afi;
+        }
+        let bfi_diff = bfi - bfi_prev;
+        if bfi_diff >= BI_THD || bfi_diff <= -BI_THD {
+            update = true;
+            bfi_prev = bfi;
+        }
+        let cfi_diff = cfi - cfi_prev;
+        if cfi_diff >= CI_THD || cfi_diff <= -CI_THD {
+            update = true;
+            cfi_prev = cfi;
+        }
+        if (systick - msgtick) >= 4 {
+            update = true;
+        }
+
+        if update {
+            // line
+            unwrap!(write!(
             line.bus,
             r#"{{"seq":{},"id":"{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}","ver":"{}","I":{{"A":{},"B":{},"C":{},"N":{},"unit":"mA"}}}}"#,
             (seq as u32),
@@ -342,12 +375,11 @@ fn main() -> ! {
             (bfi as u32),
             (cfi as u32),
             (nfi as u32)
-        )
-        .ok());
-        line.send_hex(&[0x0D, 0x0A]);
+            ).ok());
+            line.send_hex(&[0x0D, 0x0A]);
 
-        // serial
-        unwrap!(write!(
+            // serial
+            unwrap!(write!(
             serial.bus,
             r#"{{"seq":{},"id":"{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}","ver":"{}","I":{{"A":{},"B":{},"C":{},"N":{},"unit":"mA"}}}}"#,
             (seq as u32),
@@ -357,14 +389,18 @@ fn main() -> ! {
             (bfi as u32),
             (cfi as u32),
             (nfi as u32)
-        )
-        .ok());
-        serial.send_hex(&[0x0D, 0x0A]);
-        seq = (seq + 1) as u32;
+            ).ok());
+            serial.send_hex(&[0x0D, 0x0A]);
+
+            seq = (seq + 1) as u32;
+            update = false;
+            msgtick = systick;
+        }
 
         led.set_level(PinState::High);
         rn8302.delay_ms(50);
         led.set_level(PinState::Low);
         rn8302.delay_ms(450);
+        systick = (systick + 1) as u64;
     }
 }
