@@ -6,7 +6,7 @@
 use core::fmt::Write;
 use defmt::unwrap;
 use defmt_rtt as _; // global logger
-use hal::spi;
+use hal::{spi, uart::NoRx};
 use panic_probe as _; // panic handler
 use stm32wlxx_hal::{
     self as hal,
@@ -193,17 +193,17 @@ impl Rn8302 {
 }
 
 struct Serial {
-    bus: LpUart<pins::A3, pins::A2>,
+    // A3 & A2
+    bus: LpUart<NoRx, pins::A2>,
 }
 
 impl Serial {
     #[inline]
-    pub fn new(lpuart: pac::LPUART, rcc: &mut pac::RCC, rx: pins::A3, tx: pins::A2) -> Self {
+    pub fn new(lpuart: pac::LPUART, rcc: &mut pac::RCC, tx: pins::A2) -> Self {
         rcc.cr.modify(|_, w| w.hsion().set_bit());
         while rcc.cr.read().hsirdy().is_not_ready() {}
         let bus = cortex_m::interrupt::free(|cs| {
             LpUart::new(lpuart, 230400, uart::Clk::Hsi16, rcc)
-                .enable_rx(rx, cs)
                 .enable_tx(tx, cs)
         });
         defmt::info!("serial bus init done");
@@ -227,17 +227,17 @@ impl Serial {
 }
 
 struct Line {
-    bus: Uart1<pins::B7, pins::B6>,
+    // B7 & B6
+    bus: Uart1<NoRx, pins::B6>,
 }
 
 impl Line {
     #[inline]
-    pub fn new(uart1: pac::USART1, rcc: &mut pac::RCC, rx: pins::B7, tx: pins::B6) -> Self {
+    pub fn new(uart1: pac::USART1, rcc: &mut pac::RCC, tx: pins::B6) -> Self {
         rcc.cr.modify(|_, w| w.hsion().set_bit());
         while rcc.cr.read().hsirdy().is_not_ready() {}
         let bus = cortex_m::interrupt::free(|cs| {
             Uart1::new(uart1, 230400, uart::Clk::Hsi16, rcc)
-                .enable_rx(rx, cs)
                 .enable_tx(tx, cs)
         });
         defmt::info!("line bus init done");
@@ -285,10 +285,10 @@ fn main() -> ! {
     led.set_level(PinState::High);
 
     // serial
-    let mut serial: Serial = Serial::new(dp.LPUART, &mut dp.RCC, gpioa.a3, gpioa.a2);
+    let mut serial: Serial = Serial::new(dp.LPUART, &mut dp.RCC, gpioa.a2);
 
     // line
-    let mut line: Line = Line::new(dp.USART1, &mut dp.RCC, gpiob.b7, gpiob.b6);
+    let mut line: Line = Line::new(dp.USART1, &mut dp.RCC, gpiob.b6);
 
     // rn8302
     let mut rn8302: Rn8302 = Rn8302::new(

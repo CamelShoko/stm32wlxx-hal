@@ -675,8 +675,8 @@ pub mod pins {
     impl_af!(Uart2Rx, A3, set_uart2_rx_af, 7);
     impl_af!(Uart2Ck, A4, set_uart2_ck_af, 7);
     impl_af!(Uart1Ck, A8, set_uart1_ck_af, 7);
-    impl_af!(Uart1Tx, A9, set_uart1_tx_af, 7);
-    impl_af!(Uart1Rx, A10, set_uart1_rx_af, 7);
+    // impl_af!(Uart1Tx, A9, set_uart1_tx_af, 7);
+    // impl_af!(Uart1Rx, A10, set_uart1_rx_af, 7);
     impl_af!(Uart1Cts, A11, set_uart1_cts_af, 7);
     impl_af!(Uart1Rts, A12, set_uart1_rts_af, 7);
     impl_af!(Uart1Rts, B3, set_uart1_rts_af, 7);
